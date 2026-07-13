@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "seventhnight",
+  "version": "1.0.0",
+  "name": "SeventhNight",
+  "description": "Horda nocturna cada 7 días estilo 7 Days to Die.",
+  "authors": ["vos"],
+  "license": "MIT",
+  "environment": "*",
+
+  "entrypoints": {
+    "main": [
+      "com.seventhnight.SeventhNightMod"
+    ],
+    "client": [
+      "com.seventhnight.client.SeventhnightClient"
+    ]
+  },
+
+  "mixins": [
+    "seventhnight.mixins.json"
+  ],
+
+  "depends": {
+    "fabricloader": ">=0.14.21",
+    "fabric-api": "*",
+    "minecraft": "~1.20.1",
+    "java": ">=17"
+  }
+}

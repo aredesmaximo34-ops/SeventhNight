@@ -1,0 +1,40 @@
+git init# Gradle
+.gradle/
+build/
+out/
+
+# Loom / Minecraft run directory
+run/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Eclipse
+.project
+.classpath
+.settings/
+bin/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Logs y crash dumps
+*.log
+hs_err_pid*.log
+replay_pid*.log
+
+# Archivos de entorno / secretos
+.env
+
+# Otros
+*.class
+*.jar.orig
