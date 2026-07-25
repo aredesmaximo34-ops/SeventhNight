@@ -11,10 +11,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(ClientWorld.class)
 public class SkyColorMixin {
 
-    @Inject(method = "method_3829", at = @At("RETURN"), cancellable = true)
+    @Inject(method = "getSkyColor", at = @At("RETURN"), cancellable = true)
     private void onGetSkyColor(Vec3d pos, float tickDelta, CallbackInfoReturnable<Vec3d> cir) {
         if (ClientSeventhnightState.isActive()) {
-            cir.setReturnValue(new Vec3d(0.2, 0.0, 0.0));
+            cir.setReturnValue(new Vec3d(0.65, 0.02, 0.02));
         }
     }
 }

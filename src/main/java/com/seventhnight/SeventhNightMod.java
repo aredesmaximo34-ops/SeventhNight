@@ -20,7 +20,8 @@ public class SeventhNightMod implements ModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
     public static boolean isSeventhnightActive = false;
-    private static int nightCounter = 0;
+    public static int nightCounter = 0;
+    public static int totalZombieKills = 0;
     private static boolean nightCounted = false;
 
     private static final int SEVENTH_NIGHT_EVERY_N_NIGHTS = 7;
@@ -43,28 +44,26 @@ public class SeventhNightMod implements ModInitializer {
                 nightCounted = true;
                 nightCounter++;
 
-                if (nightCounter % SEVENTH_NIGHT_EVERY_N_NIGHTS == 0) {
+                boolean isSeventhNight = (nightCounter % SEVENTH_NIGHT_EVERY_N_NIGHTS == 0);
+
+                if (isSeventhNight) {
                     isSeventhnightActive = true;
                     LOGGER.info("[SEVENTHNIGHT] ¡La Séptima Noche ha llegado! (Dia " + nightCounter + ")");
                     server.getPlayerManager().broadcast(
-                            net.minecraft.text.Text.literal("§f§lDia" + " §4§l" + nightCounter + " - " + "§4☠"),
+                            net.minecraft.text.Text.literal("§f§lDÍA: §4§l" + nightCounter),
                             false
                     );
                     world.getGameRules().get(GameRules.SPAWN_RADIUS).set(10, server);
 
-                    // Enviar packet a todos los clientes usando FABRIC
                     SeventhnightSyncPacket packet = new SeventhnightSyncPacket(true);
                     for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
                         ServerPlayNetworking.send(player, SeventhnightSyncPacket.ID, packet.toBuf());
                     }
 
                     com.seventhnight.SeventhnightSpawner.forceStartFirstWave(world);
-
                 } else {
-                    int nightsUntil = SEVENTH_NIGHT_EVERY_N_NIGHTS - (nightCounter % SEVENTH_NIGHT_EVERY_N_NIGHTS);
                     server.getPlayerManager().broadcast(
-                            net.minecraft.text.Text.literal("§f§lDia " + nightCounter + " -"
-                                    + " §c§lFaltan " + nightsUntil + " §c§ldias para la Horda"),
+                            net.minecraft.text.Text.literal("§f§lDÍA: " + nightCounter),
                             false
                     );
                 }
@@ -75,20 +74,30 @@ public class SeventhNightMod implements ModInitializer {
             }
 
             if (isSeventhnightActive) {
-                if (time >= 23000 || time < 1000) {
+                boolean isDaytime = time >= 1000 && time < 12000;
+                if (isDaytime) {
                     isSeventhnightActive = false;
                     com.seventhnight.SeventhnightSpawner.reset(server);
                     LOGGER.info("[SEVENTHNIGHT] Horda terminada por amanecer.");
                     world.getGameRules().get(GameRules.SPAWN_RADIUS).set(10, server);
 
-                    // Enviar packet para desactivar usando FABRIC
                     SeventhnightSyncPacket packet = new SeventhnightSyncPacket(false);
                     for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
                         ServerPlayNetworking.send(player, SeventhnightSyncPacket.ID, packet.toBuf());
                     }
                 }
 
-                com.seventhnight.SeventhnightSpawner.onSeventhnightTick(world);
+                boolean nearDawn = time >= 21000;
+                com.seventhnight.SeventhnightSpawner.onSeventhnightTick(world, nearDawn);
+            }
+
+            // Heartbeat: resincroniza el estado real cada 40 ticks (2 segundos),
+            // por si se perdió el paquete puntual de activación/desactivación
+            if (world.getTime() % 40 == 0) {
+                SeventhnightSyncPacket syncPacket = new SeventhnightSyncPacket(isSeventhnightActive);
+                for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+                    ServerPlayNetworking.send(player, SeventhnightSyncPacket.ID, syncPacket.toBuf());
+                }
             }
         } catch (Exception e) {
             LOGGER.error("[SEVENTHNIGHT] ERROR en onServerTick: " + e.getMessage());
@@ -100,6 +109,7 @@ public class SeventhNightMod implements ModInitializer {
         if (entity.hasCustomName()
                 && entity.getCustomName().getString().contains("☠")) {
             com.seventhnight.SeventhnightSpawner.onMobDied();
+            totalZombieKills++;
         }
     }
 }

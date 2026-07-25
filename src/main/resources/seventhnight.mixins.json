@@ -2,6 +2,14 @@
   "required": true,
   "package": "com.seventhnight.mixin",
   "compatibilityLevel": "JAVA_17",
+  "client": [
+    "SkyColorMixin",
+    "FogRendererMixin"
+  ],
+  "mixins": [
+    "SleepMixin",
+    "ZombieDeathMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }

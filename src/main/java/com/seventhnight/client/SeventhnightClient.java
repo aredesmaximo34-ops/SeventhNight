@@ -23,13 +23,9 @@ public class SeventhnightClient implements ClientModInitializer {
             ClientSeventhnightState.tick();
             if (client.player != null) {
 
-                // PRUEBA FORZADA: Se activa apenas entrás al mundo
-                ClientSeventhnightState.setActive(true);
-
                 boolean tieneCeguera = client.player.hasStatusEffect(StatusEffects.BLINDNESS);
 
                 if (ClientSeventhnightState.isActive() && !tieneCeguera) {
-                    // Le damos el efecto de Ceguera por 2 segundos (se renueva solo)
                     client.player.addStatusEffect(new StatusEffectInstance(StatusEffects.BLINDNESS, 40, 0, false, false, true));
                 } else if (!ClientSeventhnightState.isActive() && tieneCeguera) {
                     client.player.removeStatusEffect(StatusEffects.BLINDNESS);

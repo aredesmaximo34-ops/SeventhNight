@@ -1,20 +1,24 @@
 package com.seventhnight;
 
+import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.SpawnReason;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.entity.mob.ZombieEntity;
 import net.minecraft.entity.mob.SkeletonEntity;
+import net.minecraft.item.Items;
+import net.minecraft.item.ItemStack;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.random.Random;
-import net.minecraft.entity.boss.BossBar;
-import net.minecraft.entity.boss.ServerBossBar;
 import net.minecraft.world.Heightmap;
+import net.minecraft.world.World;
+import net.minecraft.block.Blocks;
+import net.minecraft.block.entity.ChestBlockEntity;
 import java.util.*;
 
 public class SeventhnightSpawner {
@@ -23,10 +27,17 @@ public class SeventhnightSpawner {
     private static int totalMobs = 0;
     private static int mobsAliveCount = 0;
     private static final int MOBS_PER_WAVE = 5;
-    private static ServerBossBar bossBar = null;
     private static int tickCounter = 0;
     private static Queue<BlockPos> spawnQueue = new LinkedList<>();
     private static int waveDelay = 0;
+    private static boolean rewardGiven = false;
+
+    // --- Zombies explosivos ---
+    private static final Set<UUID> explosiveZombies = new HashSet<>();
+    private static final Map<UUID, Integer> fuseCounters = new HashMap<>();
+    private static final double EXPLOSION_TRIGGER_RANGE = 3.0;
+    private static final int FUSE_TICKS = 30;
+    private static final float EXPLOSION_POWER = 1.5f;
 
     public static void reset(MinecraftServer server) {
         currentWave = 0;
@@ -34,16 +45,12 @@ public class SeventhnightSpawner {
         mobsAliveCount = 0;
         tickCounter = 0;
         waveDelay = 0;
+        rewardGiven = false;
         spawnQueue.clear();
-        if (bossBar != null) {
-            for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
-                bossBar.removePlayer(player);
-            }
-            bossBar = null;
-        }
+        explosiveZombies.clear();
+        fuseCounters.clear();
     }
 
-    // Método para forzar el inicio inmediato
     public static void forceStartFirstWave(ServerWorld world) {
         if (currentWave == 0) {
             SeventhNightMod.LOGGER.info("[SPAWNER] Forzando inicio de primera oleada...");
@@ -51,40 +58,12 @@ public class SeventhnightSpawner {
         }
     }
 
-    private static void setupBossBar(ServerWorld world, int total) {
-        if (bossBar != null) {
-            for (ServerPlayerEntity player : world.getPlayers()) {
-                bossBar.removePlayer(player);
-            }
-        }
-        bossBar = new ServerBossBar(
-                Text.literal("§4☠ §lHorda - Oleada " + currentWave),
-                BossBar.Color.RED,
-                BossBar.Style.NOTCHED_10
-        );
-        bossBar.setPercent(1.0f);
-        for (ServerPlayerEntity player : world.getPlayers()) {
-            bossBar.addPlayer(player);
-        }
-        SeventhNightMod.LOGGER.info("[SPAWNER] BossBar configurado para oleada " + currentWave);
-    }
-
-    private static void updateBossBar(int alive) {
-        if (bossBar == null) return;
-        float percent = totalMobs > 0 ? (float) alive / totalMobs : 0f;
-        bossBar.setPercent(Math.max(0f, Math.min(1f, percent)));
-        if (alive <= 0 && currentWave > 0) {
-            bossBar.setName(Text.literal("§l§6☠ ¡Oleada " + currentWave + " §l§6completada! ☠"));
-        } else {
-            bossBar.setName(Text.literal("§4☠ §lHorda - Oleada " + currentWave));
-        }
-    }
-
-    public static void onSeventhnightTick(ServerWorld world) {
+    public static void onSeventhnightTick(ServerWorld world, boolean nearDawn) {
         if (!SeventhNightMod.isSeventhnightActive) return;
 
         try {
-            // Spawnear hasta 2 mobs por tick
+            tickExplosiveZombies(world);
+
             int spawned = 0;
             int attempts = 0;
             while (!spawnQueue.isEmpty() && spawned < 2 && attempts < 10) {
@@ -102,17 +81,22 @@ public class SeventhnightSpawner {
 
             int realAlive = countAliveMobs(world);
             mobsAliveCount = realAlive;
-            updateBossBar(mobsAliveCount);
 
             SeventhNightMod.LOGGER.info("[SPAWNER] Tick 20: realAlive=" + realAlive
                     + " | currentWave=" + currentWave
                     + " | totalMobs=" + totalMobs
                     + " | waveDelay=" + waveDelay
+                    + " | nearDawn=" + nearDawn
                     + " | cola=" + spawnQueue.size());
 
             if (mobsAliveCount <= 0) {
                 if (currentWave == 0) {
                     startNewWave(world);
+                } else if (nearDawn) {
+                    if (!rewardGiven) {
+                        rewardGiven = true;
+                        spawnRewardChests(world);
+                    }
                 } else {
                     waveDelay++;
                     if (waveDelay >= 3) {
@@ -126,6 +110,46 @@ public class SeventhnightSpawner {
         } catch (Exception e) {
             SeventhNightMod.LOGGER.error("[SPAWNER] ERROR en onSeventhnightTick: " + e.getMessage());
             e.printStackTrace();
+        }
+    }
+
+    private static void tickExplosiveZombies(ServerWorld world) {
+        if (explosiveZombies.isEmpty()) return;
+
+        Iterator<UUID> it = explosiveZombies.iterator();
+        while (it.hasNext()) {
+            UUID uuid = it.next();
+            Entity entity = world.getEntity(uuid);
+
+            if (entity == null || !entity.isAlive()) {
+                it.remove();
+                fuseCounters.remove(uuid);
+                continue;
+            }
+
+            ServerPlayerEntity nearest = (ServerPlayerEntity) world.getClosestPlayer(entity, EXPLOSION_TRIGGER_RANGE);
+
+            if (nearest != null) {
+                int fuse = fuseCounters.getOrDefault(uuid, FUSE_TICKS);
+                fuse--;
+
+                if (fuse % 5 == 0) {
+                    entity.setGlowing(fuse % 10 == 0);
+                }
+
+                if (fuse <= 0) {
+                    world.createExplosion(entity, entity.getX(), entity.getY(), entity.getZ(),
+                            EXPLOSION_POWER, false, World.ExplosionSourceType.MOB);
+                    entity.discard();
+                    it.remove();
+                    fuseCounters.remove(uuid);
+                } else {
+                    fuseCounters.put(uuid, fuse);
+                }
+            } else {
+                fuseCounters.remove(uuid);
+                entity.setGlowing(true);
+            }
         }
     }
 
@@ -169,16 +193,6 @@ public class SeventhnightSpawner {
             prepareWave(world, currentWave);
             mobsAliveCount = totalMobs;
 
-            setupBossBar(world, totalMobs);
-
-            // 🆕 Forzar actualización inmediata de la barra
-            updateBossBar(mobsAliveCount);
-
-            world.getServer().getPlayerManager().broadcast(
-                    Text.literal("§c⚠ §lOleada " + currentWave + " - " + totalMobs + " Mobs"),
-                    false
-            );
-
             SeventhNightMod.LOGGER.info("[SPAWNER] === Oleada " + currentWave + " lista. Cola: " + spawnQueue.size() + " ===");
         } catch (Exception e) {
             SeventhNightMod.LOGGER.error("[SPAWNER] ERROR en startNewWave: " + e.getMessage());
@@ -205,6 +219,12 @@ public class SeventhnightSpawner {
                     zombie.initialize(world, world.getLocalDifficulty(spawnAt),
                             SpawnReason.EVENT, null, null);
                     world.spawnEntity(zombie);
+
+                    if (random.nextInt(4) == 0) { // 25% de probabilidad de ser explosivo
+                        explosiveZombies.add(zombie.getUuid());
+                        zombie.setCustomName(Text.literal("§c💥"));
+                    }
+
                     SeventhNightMod.LOGGER.info("[SPAWNER] ✓ Zombie ☠ en " + spawnAt);
                 }
             } else {
@@ -266,5 +286,64 @@ public class SeventhnightSpawner {
             SeventhNightMod.LOGGER.error("[SPAWNER] ERROR en prepareWave: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    private static void spawnRewardChests(ServerWorld world) {
+        try {
+            int hordesSurvived = SeventhNightMod.nightCounter / 7; // 1 = primera horda, 2 = segunda, etc.
+            Random random = world.getRandom();
+
+            for (ServerPlayerEntity player : world.getPlayers()) {
+                BlockPos chestPos = player.getBlockPos().add(2, 0, 2);
+                chestPos = world.getTopPosition(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, chestPos);
+
+                world.setBlockState(chestPos, Blocks.CHEST.getDefaultState());
+
+                if (world.getBlockEntity(chestPos) instanceof ChestBlockEntity chest) {
+                    List<ItemStack> loot = generateLootForTier(hordesSurvived, random);
+                    int slot = 0;
+                    for (ItemStack stack : loot) {
+                        if (!stack.isEmpty() && slot < chest.size()) {
+                            chest.setStack(slot, stack);
+                            slot++;
+                        }
+                    }
+                }
+
+                SeventhNightMod.LOGGER.info("[SPAWNER] Cofre de recompensa (tier " + hordesSurvived + ") colocado en " + chestPos);
+            }
+        } catch (Exception e) {
+            SeventhNightMod.LOGGER.error("[SPAWNER] ERROR en spawnRewardChests: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private static List<ItemStack> generateLootForTier(int tier, Random random) {
+        List<ItemStack> loot = new ArrayList<>();
+
+        if (tier <= 1) {
+            loot.add(new ItemStack(Items.BREAD, 4 + random.nextBetween(0, 4)));
+            loot.add(new ItemStack(Items.COAL, 3 + random.nextBetween(0, 5)));
+            loot.add(new ItemStack(Items.IRON_INGOT, 2 + random.nextBetween(0, 3)));
+            loot.add(new ItemStack(Items.TORCH, 8));
+            if (random.nextBoolean()) loot.add(new ItemStack(Items.IRON_SWORD, 1));
+
+        } else if (tier == 2) {
+            loot.add(new ItemStack(Items.IRON_INGOT, 4 + random.nextBetween(0, 4)));
+            loot.add(new ItemStack(Items.GOLDEN_APPLE, 1 + random.nextBetween(0, 2)));
+            loot.add(new ItemStack(Items.ARROW, 16 + random.nextBetween(0, 16)));
+            loot.add(new ItemStack(Items.IRON_CHESTPLATE, 1));
+            loot.add(new ItemStack(Items.SHIELD, 1));
+
+        } else {
+            loot.add(new ItemStack(Items.DIAMOND, 1 + random.nextBetween(0, 3) + (tier - 3)));
+            loot.add(new ItemStack(Items.GOLDEN_APPLE, 1 + random.nextBetween(0, 2)));
+            if (random.nextBoolean()) loot.add(new ItemStack(Items.DIAMOND_SWORD, 1));
+            if (random.nextInt(10) == 0) loot.add(new ItemStack(Items.ENCHANTED_GOLDEN_APPLE, 1));
+            loot.add(new ItemStack(Items.IRON_CHESTPLATE, 1));
+            loot.add(new ItemStack(Items.ARROW, 32));
+        }
+
+        return loot;
     }
 }
